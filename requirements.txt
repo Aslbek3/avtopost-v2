@@ -1,0 +1,5 @@
+aiogram
+motor
+dnspython
+apscheduler
+pytz
