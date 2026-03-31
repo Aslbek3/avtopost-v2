@@ -46,7 +46,7 @@ async def start_cmd(message: types.Message, state: FSMContext):
             "🤖 Bu bot Telegram kanallarga xabarlarni avtomatik joylash uchun mo'ljallangan.\n\n"
             "💎 **Shaxsiy Avto-Post botga ega bo'lishni xohlaysizmi?**\n"
             "Kanallaringizni avtomatlashtiring, vaqtni tejang va ishingizni osonlashtiring!\n\n"
-            "Batafsil ma'lumot va bot xarid qilish uchun adminga yozing: @SizningUsername" # O'zingizning usernamengizni qo'ying
+            "Batafsil ma'lumot va bot xarid qilish uchun adminga yozing: @Sukuna_5288" # O'zingizning usernamengizni qo'ying
         )
         await message.answer(reklama_matni)
         return
@@ -68,7 +68,7 @@ async def pro_ad(message: types.Message):
         "✅ Har bir post tagiga chiroyli ssilka tugmalari qo'shish;\n"
         "✅ Kanallar va postlar sonida umuman cheklov yo'q;\n"
         "✅ Interval taymer (har X minutda avtomatik post tashlash).\n\n"
-        "Tarifni yangilash uchun adminga yozing: @SizningUsername"
+        "Tarifni yangilash uchun adminga yozing: @Sukuna_5288"
     )
     await message.answer(text)
 
