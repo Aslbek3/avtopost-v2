@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from aiogram import Router, F, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.context import FSMContext
@@ -13,12 +13,23 @@ router = Router()
 cluster = AsyncIOMotorClient(MONGO_URL)
 db = cluster["avto_post_db"]
 
-# Asosiy menyu (Adminlar uchun)
+# Asosiy menyu (Statistika va Pro qo'shilgan)
 main_menu = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="📥 Post yuklash")],
         [KeyboardButton(text="📅 Reja"), KeyboardButton(text="⚙️ Kanallar")],
-        [KeyboardButton(text="🚀 PRO Versiyaga o'tish")] # Yangi tugma!
+        [KeyboardButton(text="📊 Statistika"), KeyboardButton(text="🚀 PRO Versiya")]
+    ],
+    resize_keyboard=True
+)
+
+# Vaqt tanlash uchun maxsus tayyor tugmalar (Avto vaqt)
+time_menu = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="Bugun 09:00"), KeyboardButton(text="Bugun 13:00")],
+        [KeyboardButton(text="Bugun 18:00"), KeyboardButton(text="Bugun 21:00")],
+        [KeyboardButton(text="Ertaga 09:00"), KeyboardButton(text="Ertaga 18:00")],
+        [KeyboardButton(text="Bekor qilish")]
     ],
     resize_keyboard=True
 )
@@ -32,7 +43,8 @@ class ChannelState(StatesGroup):
     waiting_for_name = State()
     waiting_for_id = State()
 
-MENU_BUTTONS = ["📥 Post yuklash", "📅 Reja", "⚙️ Kanallar", "🚀 PRO Versiyaga o'tish", "/start"]
+# Menyudagi tugmalar ro'yxati (Bekor qilish tizimi uchun)
+MENU_BUTTONS = ["📥 Post yuklash", "📅 Reja", "⚙️ Kanallar", "📊 Statistika", "🚀 PRO Versiya", "Bekor qilish", "/start"]
 
 # ==================== START VA REKLAMA ====================
 @router.message(F.text == "/start")
@@ -46,7 +58,7 @@ async def start_cmd(message: types.Message, state: FSMContext):
             "🤖 Bu bot Telegram kanallarga xabarlarni avtomatik joylash uchun mo'ljallangan.\n\n"
             "💎 **Shaxsiy Avto-Post botga ega bo'lishni xohlaysizmi?**\n"
             "Kanallaringizni avtomatlashtiring, vaqtni tejang va ishingizni osonlashtiring!\n\n"
-            "Batafsil ma'lumot va bot xarid qilish uchun adminga yozing: @Sukuna_5288" # O'zingizning usernamengizni qo'ying
+            "Batafsil ma'lumot va bot xarid qilish uchun adminga yozing: @SizningUsername"
         )
         await message.answer(reklama_matni)
         return
@@ -59,16 +71,37 @@ async def start_cmd(message: types.Message, state: FSMContext):
         reply_markup=main_menu
     )
 
-@router.message(F.text == "🚀 PRO Versiyaga o'tish")
+# ==================== PRO REKLAMASI ====================
+@router.message(F.text == "🚀 PRO Versiya")
 async def pro_ad(message: types.Message):
     if message.from_user.id not in ADMINS: return
     text = (
         "🚀 **PRO Versiya Afzalliklari:**\n\n"
         "✅ Birdaniga yuzlab postlarni vergul orqali oson rejalashtirish;\n"
         "✅ Har bir post tagiga chiroyli ssilka tugmalari qo'shish;\n"
+        "✅ Rasmlarga avtomatik Watermark (Suv belgisi) yozish;\n"
         "✅ Kanallar va postlar sonida umuman cheklov yo'q;\n"
         "✅ Interval taymer (har X minutda avtomatik post tashlash).\n\n"
-        "Tarifni yangilash uchun adminga yozing: @Sukuna_5288"
+        "Tarifni yangilash uchun adminga yozing: @SizningUsername"
+    )
+    await message.answer(text)
+
+# ==================== STATISTIKA ====================
+@router.message(F.text == "📊 Statistika")
+async def show_stats(message: types.Message):
+    if message.from_user.id not in ADMINS: return
+    
+    # Bazadan shu adminga tegishli ma'lumotlarni sanaymiz
+    channels_count = await db.channels.count_documents({})
+    pending_posts = await db.posts.count_documents({"status": "pending"})
+    sent_posts = await db.posts.count_documents({"status": "sent"})
+    
+    text = (
+        "📊 **Sizning botingiz statistikasi:**\n\n"
+        f"📢 Ulangan kanallar: **{channels_count} ta**\n"
+        f"⏳ Navbatdagi postlar: **{pending_posts} ta**\n"
+        f"✅ Muvaffaqiyatli yuborilganlar: **{sent_posts} ta**\n\n"
+        "*(Limitlarni olib tashlash va ko'proq imkoniyatlar uchun PRO versiyaga o'ting)*"
     )
     await message.answer(text)
 
@@ -108,6 +141,7 @@ async def ch_id(message: types.Message, state: FSMContext):
         await state.clear()
         return
         
+    # QAT'IY TEKSHIRUV: ID -100 yoki @ bilan boshlanishi shart
     if not (message.text.startswith("-100") or message.text.startswith("@")):
         await message.answer("❌ Xato! Kanal ID'si doim '-100' yoki username '@' bilan boshlanishi kerak. Qaytadan yozing:")
         return 
@@ -147,7 +181,7 @@ async def delete_post(callback: types.CallbackQuery):
     await callback.message.delete()
     await callback.answer("Post rejadagi ro'yxatdan o'chirildi.")
 
-# ==================== POST YUKLASH (BASIC VERSIYA) ====================
+# ==================== POST YUKLASH VA AVTO VAQT ====================
 @router.message(F.text == "📥 Post yuklash")
 async def post_start(message: types.Message, state: FSMContext):
     if message.from_user.id not in ADMINS: return
@@ -162,12 +196,10 @@ async def post_get(message: types.Message, state: FSMContext):
         return
         
     await state.update_data(msg_id=message.message_id, chat_id=message.chat.id)
-    
-    # Tugma so'ramaymiz, to'g'ridan-to'g'ri kanal tanlashga o'tamiz
     channels = await db.channels.find().to_list(length=100)
     
     if not channels:
-        await message.answer("❌ Bazada kanallar yo'q! Avval kanal qo'shing.")
+        await message.answer("❌ Kanallar yo'q! Avval kanal qo'shing.", reply_markup=main_menu)
         await state.clear()
         return
         
@@ -178,30 +210,45 @@ async def post_get(message: types.Message, state: FSMContext):
 @router.callback_query(PostState.waiting_for_channel, F.data.startswith("ch_"))
 async def ch_select(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(target=callback.data.split("ch_")[1])
-    # Vaqtni faqat bittadan yozish so'raladi
+    
+    await callback.message.delete()
     await callback.message.answer(
-        "Vaqtni kiriting (Masalan: `15:00` yoki `04-01 16:30`).\n\n"
-        "*(Diqqat: Basic versiyada vaqtlarni bittadan kiritish mumkin)*"
+        "⏰ **Vaqtni tanlang yoki o'zingiz yozing:**\n"
+        "(Masalan, qo'lda yozsangiz: `15:00` yoki `04-15 15:00`)\n\n"
+        "*Eslatma: Basic versiyada faqat bitta vaqt kiritish mumkin.*",
+        reply_markup=time_menu 
     )
     await state.set_state(PostState.waiting_for_time)
 
 @router.message(PostState.waiting_for_time)
-async def process_single_time(message: types.Message, state: FSMContext):
+async def process_smart_time(message: types.Message, state: FSMContext):
     if message.text in MENU_BUTTONS:
+        await message.answer("Jarayon bekor qilindi.", reply_markup=main_menu)
         await state.clear()
         return
         
     data = await state.get_data()
     t_str = message.text.strip()
     
-    # Vergul bor-yo'qligini tekshirish (ommaviy kiritishni bloklash)
     if "," in t_str or "\n" in t_str:
-        await message.answer("❌ Basic versiyada bir nechta vaqt kiritish mumkin emas! Faqat bitta vaqt yozing (masalan: `15:00`).\n\nLimitlarni olib tashlash uchun 🚀 PRO versiyaga o'ting.")
+        await message.answer("❌ Basic versiyada faqat bitta vaqt kiritish mumkin! Bitta vaqt yozing.", reply_markup=time_menu)
         return
 
     try:
-        if len(t_str) <= 5: 
-            parsed_dt = datetime.strptime(f"{datetime.now().strftime('%m-%d')} {t_str}", "%m-%d %H:%M")
+        now = datetime.now(TIMEZONE)
+        
+        # Tugmalarni tushunish mantig'i
+        if "Bugun" in t_str:
+            soat = t_str.split(" ")[1] 
+            parsed_dt = datetime.strptime(f"{now.strftime('%m-%d')} {soat}", "%m-%d %H:%M")
+        elif "Ertaga" in t_str:
+            soat = t_str.split(" ")[1]
+            ertaga = now + timedelta(days=1)
+            parsed_dt = datetime.strptime(f"{ertaga.strftime('%m-%d')} {soat}", "%m-%d %H:%M")
+        elif len(t_str) <= 5: 
+            parsed_dt = datetime.strptime(f"{now.strftime('%m-%d')} {t_str}", "%m-%d %H:%M")
+            if parsed_dt.time() < now.time():
+                parsed_dt = parsed_dt + timedelta(days=1)
         else: 
             parsed_dt = datetime.strptime(t_str, "%m-%d %H:%M")
         
@@ -213,11 +260,11 @@ async def process_single_time(message: types.Message, state: FSMContext):
             "target": data['target'], 
             "time": final_dt.isoformat(),
             "status": "pending",
-            "is_pro": False # Statistika va kelajak uchun belgi
+            "is_pro": False
         })
         
-        await message.answer(f"✅ Post muvaffaqiyatli rejalashtirildi!", reply_markup=main_menu)
+        await message.answer(f"✅ Post saqlandi! Vaqti: {final_dt.strftime('%d-%m-%Y %H:%M')}", reply_markup=main_menu)
         await state.clear()
         
     except Exception as e:
-        await message.answer(f"❌ Xato format. Iltimos, `15:00` yoki `03-31 15:00` ko'rinishida yozing.")
+        await message.answer(f"❌ Noto'g'ri vaqt formati. Tugmalardan foydalaning yoki to'g'ri yozing.")
