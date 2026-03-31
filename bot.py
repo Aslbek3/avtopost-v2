@@ -6,8 +6,8 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from motor.motor_asyncio import AsyncIOMotorClient
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# Sozlamalarni chaqiramiz
-from config import BOT_TOKEN, MONGO_URL, TIMEZONE, ADMIN_ID
+# Sozlamalarni chaqiramiz (ADMINS ro'yxat bo'lishi kerak)
+from config import BOT_TOKEN, MONGO_URL, TIMEZONE, ADMINS
 from handlers import router
 
 bot = Bot(token=BOT_TOKEN)
@@ -19,12 +19,14 @@ db = cluster["avto_post_db"]
 
 scheduler = AsyncIOScheduler(timezone=TIMEZONE)
 
-# ==================== TAYMER VAZIFASI ====================
+# ==================== TAYMER VAZIFASI (SPAMGA QARSHI) ====================
 async def check_and_post():
     try:
         now = datetime.now(TIMEZONE).isoformat()
+        
+        # Faqat vaqti kelgan va statusi "pending" bo'lganlarni olamiz
         cursor = db.posts.find({"status": "pending", "time": {"$lte": now}})
-        posts = await cursor.to_list(length=100)
+        posts = await cursor.to_list(length=100) # Bir urinishda 100 ta oladi
 
         for p in posts:
             try:
@@ -34,6 +36,7 @@ async def check_and_post():
                         [InlineKeyboardButton(text=p['b_text'], url=p['b_url'])]
                     ])
                 
+                # 1. Postni kanalga yuborish
                 await bot.copy_message(
                     chat_id=p['target'],
                     from_chat_id=p['from_chat_id'],
@@ -41,27 +44,48 @@ async def check_and_post():
                     reply_markup=markup
                 )
                 
+                # 2. Muvaffaqiyatli bo'lsa, statusni 'sent' qilamiz
                 await db.posts.update_one({"_id": p["_id"]}, {"$set": {"status": "sent"}})
                 
-                # FloodWait (Blok) ga tushmaslik uchun himoya tormozi
-                await asyncio.sleep(0.05)
+                # 3. SPAMGA QARSHI TORMOZ: Har bir postdan keyin 0.05 soniya kutish
+                await asyncio.sleep(0.05) 
                 
             except Exception as e:
-                # Xato bo'lsa adminga yozish
-                error_msg = f"⚠️ **POST JONATISHDA XATO!**\nKanal: `{p['target']}`\nVaqti: `{p['time']}`\nXato: `{str(e)}`"
-                await bot.send_message(chat_id=ADMIN_ID, text=error_msg)
+                # XATOLIK YUZ BERDI (Kanal o'chgan, bot bloklangan va hokazo)
+                
+                # Zudlik bilan statusni 'failed' qilamizki, qayta urinmasin
                 await db.posts.update_one({"_id": p["_id"]}, {"$set": {"status": "failed"}})
                 
-    except Exception as e:
-        logging.error(f"Taymer xatosi: {e}")
+                error_msg = (
+                    f"⚠️ **POST JONATISHDA XATO!**\n\n"
+                    f"Kanal: `{p['target']}`\n"
+                    f"Vaqt: `{p['time']}`\n"
+                    f"Sabab: `{str(e)}`"
+                )
+                
+                # Xabarni barcha adminlarga tarqatish
+                for admin in ADMINS:
+                    try:
+                        await bot.send_message(chat_id=admin, text=error_msg)
+                    except Exception as admin_err:
+                        # Agar admin botni bloklagan bo'lsa, jimgina o'tib ketadi
+                        logging.warning(f"Admin {admin} ga xabar yetib bormadi: {admin_err}")
+                
+    except Exception as main_e:
+        logging.error(f"Taymer umumiy xatosi: {main_e}")
 
 # ==================== ISHGA TUSHIRISH ====================
 async def main():
     dp.include_router(router)
+    
+    # Taymerni har 1 daqiqada ishlashga sozlaymiz
     scheduler.add_job(check_and_post, "interval", minutes=1)
     scheduler.start()
     
-    logging.info("🟢 Bot ishga tushdi...")
+    logging.info("🟢 O'q o'tmas bot ishga tushdi...")
+    
+    # Drop pending updates - bot o'chib qolganda kelgan xabarlarni miyasidan chiqarib tashlaydi
+    await bot.delete_webhook(drop_pending_updates=True) 
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
