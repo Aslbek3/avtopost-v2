@@ -112,7 +112,7 @@ async def channels_list(message: Message):
 async def add_ch_start(call: CallbackQuery, state: FSMContext):
     text = (
         "📢 Kanal ID raqamini yuboring (-100 bilan boshlanishi shart):\n\n"
-        "💡 Yordam: Kanal ID sini olish uchun kanalingizdagi biron xabarni @userinfobot ga uzating (forward qiling). U sizga ID raqamni aniqlab beradi."
+        "💡 Yordam: Kanal ID sini @userinfobot dan oling. "
     )
     await call.message.answer(text)
     await state.set_state(ChannelState.waiting_for_id)
