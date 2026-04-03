@@ -133,9 +133,9 @@ async def get_user_statistics(uid: int) -> str:
     # Natijani ixcham dizaynda yig'ish
     text = (
         "📈   Bot Holati:  \n"
-        f"├ 👥 Userlar: {total_users}    | 👮‍♂️ Adminlar: {total_admins}\n"
+        f"├ 👥 Userlar: {total_users} | 👮‍♂️ Adminlar: {total_admins}\n"
         f"├ ⏳ Navbatda: {total_pending} | ⚠️ Xatolar: {total_failed}\n"
-        f"└ 🖥 Uptime: {uptime_str}       | ⚡️ Ping: {db_ping_ms}ms"
+        f"└ 🖥 Uptime: {uptime_str} | ⚡️ Ping: {db_ping_ms}ms"
     )
     
     return text
