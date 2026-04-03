@@ -120,25 +120,22 @@ async def get_user_statistics(uid: int) -> str:
     
     total_failed = await db.posts.count_documents({"status": "failed"})
     
-    # Server va ping
+
+    # Server va ping (ixcham formatda)
     uptime_seconds = int(time.time() - BOT_START_TIME)
-    uptime_str = f"{uptime_seconds // 3600} soat {(uptime_seconds % 3600) // 60} daqiqa"
+    uptime_str = f"{uptime_seconds // 3600}s {(uptime_seconds % 3600) // 60}d"
     
     start_db_ping = time.time()
     await client.admin.command("ping")
     end_db_ping = time.time()
     db_ping_ms = round((end_db_ping - start_db_ping) * 1000)
     
-    # Xabarni yig'ish
+    # Natijani ixcham dizaynda yig'ish
     text = (
-        "📊 **Bot Statistikasi**\n\n"
-        f"👥 **Foydalanuvchilar:** {total_users} ta\n"
-        f"👮‍♂️ **Adminlar:** {total_admins} ta\n\n"
-        f"⏳ **Umumiy kutayotgan postlar:** {total_pending} ta"
-        f"{channel_text}\n"
-        f"⚠️ **Yuborilmay qolgan (Xato):** {total_failed} ta\n\n"
-        f"🖥 **Server ishlash vaqti:** {uptime_str}\n"
-        f"🗄 **Baza tezligi (Ping):** {db_ping_ms} ms"
+        "📈 **Bot Holati:**\n"
+        f"├ 👥 Userlar: {total_users} | 👮‍♂️ Adminlar: {total_admins}\n"
+        f"├ ⏳ Navbatda: {total_pending} | ⚠️ Xatolar: {total_failed}\n"
+        f"└ 🖥 Uptime: {uptime_str} | ⚡️ Ping: {db_ping_ms}ms"
     )
     
     return text
