@@ -16,3 +16,5 @@ WATERMARK_TEXT = "@reja12bot"
 
 # 4. Navbatda turgan postlar tushadigan kanal ID si (-100 bilan boshlanadi)
 QUEUE_CHANNEL_ID = -1003881509305
+
+DB_NAME = "avtopost_db"
