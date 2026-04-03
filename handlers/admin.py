@@ -92,7 +92,7 @@ async def channels_list(message: Message):
     uid = message.from_user.id
     if not await db.is_admin(uid): return
     kanallar = await db.get_channels(uid)
-    text = "📢 **Kanallar ro'yxati:**\n\n"
+    text = "📢   Kanallar ro'yxati:  \n\n"
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     if kanallar:
         for k in kanallar:
@@ -105,7 +105,11 @@ async def channels_list(message: Message):
 
 @admin_router.callback_query(F.data == "add_new_ch")
 async def add_ch_start(call: CallbackQuery, state: FSMContext):
-    await call.message.answer("Kanal ID raqamini yuboring (-100 bilan boshlanishi shart):")
+    text = (
+        "📢  Kanal ID raqamini yuboring  (-100 bilan boshlanishi shart):\n\n"
+        "💡 Yordam: Kanal ID sini @userinfobot dan oling. "
+    )
+    await call.message.answer(text, parse_mode="Markdown")
     await state.set_state(ChannelState.waiting_for_id)
 
 @admin_router.message(ChannelState.waiting_for_id)
