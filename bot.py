@@ -1,81 +1,93 @@
 import asyncio
 import logging
+import traceback
 from datetime import datetime
 from aiogram import Bot, Dispatcher
-from motor.motor_asyncio import AsyncIOMotorClient
+from aiogram.types import ErrorEvent
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from config import BOT_TOKEN, MONGO_URL, TIMEZONE, ADMINS
-from handlers import router
+import config
+import database as db
+import strings
+from handlers.admin import admin_router
+from handlers.settings import settings_router
+logging.basicConfig(level=logging.INFO)
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
-
-cluster = AsyncIOMotorClient(MONGO_URL)
-db = cluster["avto_post_db"]
-
-scheduler = AsyncIOScheduler(timezone=TIMEZONE)
-
-# Bazadagi barcha adminlarni olish funksiyasi
-async def get_all_admins():
-    admins_db = await db.admins.find().to_list(length=100)
-    return ADMINS + [a['user_id'] for a in admins_db]
-
-async def check_and_post():
-    try:
-        now = datetime.now(TIMEZONE).isoformat()
-        cursor = db.posts.find({"status": "pending", "time": {"$lte": now}})
-        posts = await cursor.to_list(length=100) 
-
-        active_admins = await get_all_admins()
-
-        for p in posts:
-            try:
-                # 1. Postni haqiqiy kanalga yuborish
-                await bot.copy_message(
-                    chat_id=p['target'],
-                    from_chat_id=p['from_chat_id'],
-                    message_id=p['message_id']
-                )
+async def send_scheduled_posts(bot: Bot):
+    # VAQT FORMATI (DD.MM HH:MM)
+    hozirgi_vaqt = datetime.now(config.TIMEZONE).strftime("%d.%m %H:%M")
+    
+    all_pending = await db.get_all_pending_posts()
+    
+    for post in all_pending:
+        if post['send_time'] == hozirgi_vaqt:
+            uid = post['owner_id']
+            user_channels = await db.get_channels(uid)
+            target_ids = post['target_channels']
+            
+            for ch_id in target_ids:
+                kanal_info = next((c for c in user_channels if c['channel_id'] == ch_id), None)
                 
-                # 2. Statusni 'sent' qilish
-                await db.posts.update_one(
-                    {"_id": p["_id"]}, 
-                    {"$set": {"status": "sent", "sent_at": datetime.now(TIMEZONE).isoformat()}}
-                )
-                
-                # ================= 3. ADMINGA HISOBOT =================
-                report_text = f"✅ **Post yuborildi!**\n📢 Kanal: `{p['target']}`\n⏰ Vaqt: `{p['time'][:16]}`"
-                for admin in active_admins:
+                if kanal_info:
+                    bot_link = kanal_info['bot_username']
+                    msg_text = post['text'].replace("[bot nomi]", bot_link).replace("[BOT_NOMI]", bot_link)
+                    
                     try:
-                        await bot.send_message(chat_id=admin, text=report_text)
-                        # Post nusxasini adminga ham tashlab qo'yamiz
-                        await bot.copy_message(chat_id=admin, from_chat_id=p['from_chat_id'], message_id=p['message_id'])
-                    except: pass
-                # =====================================================
+                        if post.get('photo_id'):
+                            await bot.send_photo(chat_id=ch_id, photo=post['photo_id'], caption=msg_text)
+                        else:
+                            await bot.send_message(chat_id=ch_id, text=msg_text)
+                        
+                        await asyncio.sleep(0.1) 
+                    except Exception as e:
+                        logging.error(f"Yuborishda xato ({ch_id}): {e}")
 
-                # 4. Antispam
-                await asyncio.sleep(0.05) 
-                
-            except Exception as e:
-                await db.posts.update_one({"_id": p["_id"]}, {"$set": {"status": "failed", "error": str(e)}})
-                err_text = f"⚠️ **XATOLIK!**\nKanal: `{p['target']}`\nSabab: `{str(e)}`"
-                for admin in active_admins:
-                    try: await bot.send_message(chat_id=admin, text=err_text)
-                    except: pass 
-                
-    except Exception as main_e:
-        logging.error(f"Taymer xatosi: {main_e}")
+            # KANALLARGA YUBORIB BO'LGANDAN SO'NG, NAVBAT KANALIDAN O'CHIRISH
+            if post.get('queue_msg_id'):
+                try:
+                    await bot.delete_message(chat_id=config.QUEUE_CHANNEL_ID, message_id=post['queue_msg_id'])
+                except Exception as e:
+                    logging.error(f"Navbat kanalidan o'chirishda xato: {e}")
+
+            await db.mark_post_sent(post['_id'])
+
+async def setup_error_handler(dp: Dispatcher, bot: Bot):
+    @dp.error()
+    async def error_handler(event: ErrorEvent):
+        logging.error(f"XATOLIK: {traceback.format_exc()}")
+        chat_id = None
+        if event.update.message: 
+            chat_id = event.update.message.chat.id
+        elif event.update.callback_query: 
+            chat_id = event.update.callback_query.message.chat.id
+            
+        if chat_id:
+            try:
+                err_msg = f"{strings.USER_ERROR_MSG}\n\n⚠️ *Texnik xato:* `{str(event.exception)[:100]}`"
+                await bot.send_message(chat_id, err_msg, parse_mode="Markdown")
+            except: 
+                pass
 
 async def main():
-    dp.include_router(router)
-    scheduler.add_job(check_and_post, "interval", minutes=1)
+    bot = Bot(token=config.BOT_TOKEN)
+    dp = Dispatcher()
+    
+    dp.include_router(admin_router)
+    dp.include_router(settings_router) 
+    
+    await db.check_db_connection()
+    await setup_error_handler(dp, bot)
+
+    scheduler = AsyncIOScheduler(timezone=config.TIMEZONE)
+    scheduler.add_job(send_scheduled_posts, "interval", minutes=1, args=[bot])
     scheduler.start()
-    logging.info("🟢 Bot (To'liq versiya) ishga tushdi...")
-    await bot.delete_webhook(drop_pending_updates=True) 
+
+    print("🚀 Bot ishga tushdi...")
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    try: asyncio.run(main())
-    except KeyboardInterrupt: pass
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Bot to'xtatildi.")

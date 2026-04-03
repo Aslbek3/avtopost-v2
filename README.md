@@ -1,1 +1,0 @@
-# avto-post-admin
