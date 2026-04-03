@@ -14,8 +14,8 @@ admin_router = Router()
 
 # ==================== HOLATLAR (FSM) ====================
 class PostState(StatesGroup):
-    post_kutish = State()
     kanal_tanlash = State()
+    post_kutish = State()
     vaqt_tanlash = State()
     sana_tanlash = State()
 
@@ -64,18 +64,23 @@ async def show_schedule(message: Message):
         await message.answer("Hozircha navbatda postlar yo'q.")
         return
     
-    await message.answer("📅 **Yaqin xabarlar rejasi:**")
-    for p in posts[:10]: # Ko'pi bilan 10 ta postni ko'rsatish
+    await message.answer("📅 Yaqin xabarlar rejasi:")
+    for p in posts[:10]:
+        qisqa_matn = p['text'][:40] + "..." if len(p['text']) > 40 else p['text']
+        info_text = (
+            f"⏰ Vaqt va Sana: {p['send_time']}\n"
+            f"📝 Post: {qisqa_matn}\n"
+            f"📢 Kanallar: {len(p['target_channels'])} ta"
+        )
         btn = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"delpost_{p['_id']}")]
         ])
-        await message.answer(f"⏰ {p['send_time']} | 📢 {len(p['target_channels'])} ta kanal", reply_markup=btn)
+        await message.answer(info_text, reply_markup=btn)
 
 @admin_router.callback_query(F.data.startswith("delpost_"))
 async def delete_post_call(call: CallbackQuery):
     pid = call.data.split("_")[1]
     
-    # Bazadan o'chirishdan oldin navbat kanalidan o'chirishga harakat qilamiz
     post = await db.db.posts.find_one({"_id": ObjectId(pid)})
     if post and post.get("queue_msg_id"):
         try:
@@ -92,7 +97,7 @@ async def channels_list(message: Message):
     uid = message.from_user.id
     if not await db.is_admin(uid): return
     kanallar = await db.get_channels(uid)
-    text = "📢   Kanallar ro'yxati:  \n\n"
+    text = "📢 Kanallar ro'yxati:\n\n"
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     if kanallar:
         for k in kanallar:
@@ -106,10 +111,10 @@ async def channels_list(message: Message):
 @admin_router.callback_query(F.data == "add_new_ch")
 async def add_ch_start(call: CallbackQuery, state: FSMContext):
     text = (
-        "📢  Kanal ID raqamini yuboring  (-100 bilan boshlanishi shart):\n\n"
-        "💡 Yordam: Kanal ID sini @userinfobot dan oling. "
+        "📢 Kanal ID raqamini yuboring (-100 bilan boshlanishi shart):\n\n"
+        "💡 Yordam: Kanal ID sini olish uchun kanalingizdagi biron xabarni @userinfobot ga uzating (forward qiling). U sizga ID raqamni aniqlab beradi."
     )
-    await call.message.answer(text, parse_mode="Markdown")
+    await call.message.answer(text)
     await state.set_state(ChannelState.waiting_for_id)
 
 @admin_router.message(ChannelState.waiting_for_id)
@@ -146,7 +151,7 @@ async def auto_times_menu(message: Message):
     uid = message.from_user.id
     if not await db.is_admin(uid): return
     times = await db.get_auto_times(uid)
-    text = "⏰ **Sizning avto-vaqtlaringiz:**\n\n"
+    text = "⏰ Sizning avto-vaqtlaringiz:\n\n"
     kb = InlineKeyboardMarkup(inline_keyboard=[])
     for t in times:
         text += f"🕒 {t}\n"
@@ -180,40 +185,24 @@ async def del_time_call(call: CallbackQuery):
     await call.message.delete()
 
 # ==================== 6. POST YUKLASH TIZIMI ====================
+# 1-QADAM: Kanal tanlash
 @admin_router.message(F.text == "📥 Post yuklash")
 async def post_start(message: Message, state: FSMContext):
     uid = message.from_user.id
     if not await db.is_admin(uid): return
-    await message.answer("Postni yuboring (Matnda `[bot nomi]` qatnashishi shart!):")
-    await state.set_state(PostState.post_kutish)
-
-@admin_router.message(StateFilter(PostState.post_kutish))
-async def post_get_content(message: Message, state: FSMContext):
-    if message.text == "Bekor qilish":
-        await state.clear()
-        await message.answer("Bekor qilindi.", reply_markup=main_menu)
-        return
-    
-    text = message.caption or message.text or ""
-    if "[bot nomi]" not in text and "[BOT_NOMI]" not in text:
-        await message.answer("❌ Ogohlantirish: Post matnida `[bot nomi]` so'zi qatnashishi shart! Iltimos, postni qaytadan to'g'rilab yuboring.")
-        return
-
-    uid = message.from_user.id
-    photo_id = message.photo[-1].file_id if message.photo else None
-    await state.update_data(photo_id=photo_id, text=text)
     
     kanallar = await db.get_channels(uid)
     if not kanallar:
         await message.answer("❌ Avval kanal qo'shing!")
-        await state.clear()
         return
     
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=k['channel_name'], callback_data=f"ch_{k['channel_id']}")] for k in kanallar])
-    kb.inline_keyboard.append([InlineKeyboardButton(text="🌈 Barcha kanallar", callback_data="ch_all")])
-    await message.answer("Qaysi kanalga?", reply_markup=kb)
+    kb.inline_keyboard.append([InlineKeyboardButton(text="🌟 Barcha kanallar", callback_data="ch_all")])
+    
+    await message.answer("Boshladik! Avval qaysi kanalga post joylashni tanlang:", reply_markup=kb)
     await state.set_state(PostState.kanal_tanlash)
 
+# 2-QADAM: Post so'rash
 @admin_router.callback_query(StateFilter(PostState.kanal_tanlash))
 async def post_select_ch(call: CallbackQuery, state: FSMContext):
     uid = call.from_user.id
@@ -225,7 +214,29 @@ async def post_select_ch(call: CallbackQuery, state: FSMContext):
     await state.update_data(target_channels=ids)
     await call.message.delete()
     
+    kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Bekor qilish")]], resize_keyboard=True)
+    await call.message.answer("Yaxshi! Endi postni yuboring (Rasm yoki matn):", reply_markup=kb)
+    await state.set_state(PostState.post_kutish)
+
+# 3-QADAM: Vaqt so'rash
+@admin_router.message(StateFilter(PostState.post_kutish))
+async def post_get_content(message: Message, state: FSMContext):
+    if message.text == "Bekor qilish":
+        await state.clear()
+        await message.answer("Bekor qilindi.", reply_markup=main_menu)
+        return
+    
+    text = message.caption or message.text or ""
+    
+    if "[bot nomi]" not in text.lower() and "[bot_nomi]" not in text.lower():
+        text += "\n\n🤖 Bot manzili: [bot nomi]"
+
+    photo_id = message.photo[-1].file_id if message.photo else None
+    await state.update_data(photo_id=photo_id, text=text)
+    
+    uid = message.from_user.id
     times = await db.get_auto_times(uid)
+    
     btns = [[KeyboardButton(text="Hozir (+1 min)"), KeyboardButton(text="Hozir (+5 min)")]]
     row = []
     for t in times:
@@ -234,9 +245,10 @@ async def post_select_ch(call: CallbackQuery, state: FSMContext):
     if row: btns.append(row)
     btns.append([KeyboardButton(text="Bekor qilish")])
     
-    await call.message.answer("⏰ Vaqtni tanlang:", reply_markup=ReplyKeyboardMarkup(keyboard=btns, resize_keyboard=True))
+    await message.answer("⏰ Qachon yuboramiz? Vaqtni tanlang:", reply_markup=ReplyKeyboardMarkup(keyboard=btns, resize_keyboard=True))
     await state.set_state(PostState.vaqt_tanlash)
 
+# 4-QADAM: Sana so'rash
 @admin_router.message(StateFilter(PostState.vaqt_tanlash))
 async def post_select_time(message: Message, state: FSMContext):
     v = message.text.strip()
@@ -255,6 +267,7 @@ async def post_select_time(message: Message, state: FSMContext):
                          reply_markup=ReplyKeyboardMarkup(keyboard=btns, resize_keyboard=True))
     await state.set_state(PostState.sana_tanlash)
 
+# 5-QADAM: Yakunlash
 @admin_router.message(StateFilter(PostState.sana_tanlash))
 async def post_save_final(message: Message, state: FSMContext):
     d = message.text.strip()
@@ -274,7 +287,7 @@ async def post_save_final(message: Message, state: FSMContext):
         try:
             datetime.strptime(v, "%H:%M")
         except:
-            await message.answer("❌ Xato vaqt! Boshidan boshlang.")
+            await message.answer("❌ Xato vaqt! Boshidan boshlang.", reply_markup=main_menu)
             await state.clear()
             return
             
@@ -285,14 +298,14 @@ async def post_save_final(message: Message, state: FSMContext):
                 datetime.strptime(d, "%d.%m")
                 sana_str = d
             except:
-                await message.answer("❌ Sana xato! Faqat Kun.Oy formatida yozing (Masalan: 12.05). Boshidan boshlang.")
+                await message.answer("❌ Sana xato! Faqat Kun.Oy formatida yozing (Masalan: 12.05). Boshidan boshlang.", reply_markup=main_menu)
                 await state.clear()
                 return
         yakuniy_v = f"{sana_str} {v}"
     
     queue_msg_id = None
     try:
-        q_text = f"⏳ **KUTILYAPTI**\n⏰ {yakuniy_v}\n\n{data['text']}"
+        q_text = f"⏳ KUTILYAPTI\n⏰ {yakuniy_v}\n\n{data['text']}"
         if data['photo_id']:
             q_msg = await message.bot.send_photo(chat_id=config.QUEUE_CHANNEL_ID, photo=data['photo_id'], caption=q_text)
         else:
