@@ -11,6 +11,7 @@ import database as db
 import strings
 from handlers.admin import admin_router
 from handlers.settings import settings_router
+
 logging.basicConfig(level=logging.INFO)
 
 async def send_scheduled_posts(bot: Bot):
@@ -25,6 +26,9 @@ async def send_scheduled_posts(bot: Bot):
             user_channels = await db.get_channels(uid)
             target_ids = post['target_channels']
             
+            # Post yuborilganini tekshirish uchun o'zgaruvchi
+            muvaffaqiyatli = False 
+            
             for ch_id in target_ids:
                 kanal_info = next((c for c in user_channels if c['channel_id'] == ch_id), None)
                 
@@ -38,6 +42,7 @@ async def send_scheduled_posts(bot: Bot):
                         else:
                             await bot.send_message(chat_id=ch_id, text=msg_text)
                         
+                        muvaffaqiyatli = True # Hech bo'lmasa 1 ta kanalga borsa, true bo'ladi
                         await asyncio.sleep(0.1) 
                     except Exception as e:
                         logging.error(f"Yuborishda xato ({ch_id}): {e}")
@@ -49,7 +54,12 @@ async def send_scheduled_posts(bot: Bot):
                 except Exception as e:
                     logging.error(f"Navbat kanalidan o'chirishda xato: {e}")
 
-            await db.mark_post_sent(post['_id'])
+            # Agar yuborish o'xshasa sent, o'xshamasa failed statusi beriladi
+            if muvaffaqiyatli:
+                await db.mark_post_sent(post['_id'])
+            else:
+                # Baza faylidagi statistika to'g'ri ishlashi uchun xatolikni yozamiz
+                await db.db.posts.update_one({"_id": post['_id']}, {"$set": {"status": "failed"}})
 
 async def setup_error_handler(dp: Dispatcher, bot: Bot):
     @dp.error()
